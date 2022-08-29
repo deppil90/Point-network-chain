@@ -1,0 +1,107 @@
+Setting Name
+NODENAME=Your Name
+
+Update PKG
+sudo apt update && sudo apt upgrade -y
+
+Install GO
+if ! [ -x "$(command -v go)" ]; then
+  ver="1.18.2"
+  cd $HOME
+  wget "https://golang.org/dl/go$ver.linux-amd64.tar.gz"
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf "go$ver.linux-amd64.tar.gz"
+  rm "go$ver.linux-amd64.tar.gz"
+  echo "export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin" >> ~/.bash_profile
+  source ~/.bash_profile
+fi
+
+Build Binary
+cd $HOME
+git clone https://github.com/pointnetwork/point-chain && cd point-chain
+git checkout xnet-triton
+make install
+
+Install Node
+evmosd config chain-id $EVMOS_CHAIN_ID
+evmosd config keyring-backend file
+
+Install
+evmosd init $NODENAME --chain-id $EVMOS_CHAIN_ID
+
+Download Genesis & Address Book
+wget https://raw.githubusercontent.com/pointnetwork/point-chain-config/main/testnet-xNet-Triton-1/config.toml
+wget https://raw.githubusercontent.com/pointnetwork/point-chain-config/main/testnet-xNet-Triton-1/genesis.json
+mv config.toml genesis.json ~/.evmosd/config/
+
+Check Validasi
+evmosd validate-genesis
+
+Create Service
+sudo tee /etc/systemd/system/evmosd.service > /dev/null <<EOF
+[Unit]
+Description=evmos
+After=network-online.target
+
+[Service]
+User=$USER
+ExecStart=$(which evmosd) start --home $HOME/.evmosd
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+Start Service
+sudo systemctl daemon-reload
+sudo systemctl enable evmosd
+sudo systemctl restart evmosd && sudo journalctl -u evmosd -f -o cat
+
+Create Wallet
+You can use Metamask Phrase & save mnemonic validator
+evmosd keys add $WALLET
+
+For Recover Wallet
+evmosd keys add $WALLET --recover
+
+Check List Address
+evmosd keys list
+
+Save Wallet
+EVMOS_WALLET_ADDRESS=$(evmosd keys show $WALLET -a)
+
+Input Phrase
+EVMOS_VALOPER_ADDRESS=$(evmosd keys show $WALLET --bech val -a)
+
+Input Again
+echo 'export EVMOS_WALLET_ADDRESS='${EVMOS_WALLET_ADDRESS} >> $HOME/.bash_profile
+echo 'export EVMOS_VALOPER_ADDRESS='${EVMOS_VALOPER_ADDRESS} >> $HOME/.bash_profile
+source $HOME/.bash_profile
+
+Check Balance
+evmosd query bank balances $EVMOS_WALLET_ADDRESS
+
+Check Status 
+evmosd status 2>&1 | jq .SyncInfo
+
+Create Validator
+evmosd tx staking create-validator \
+  --amount 1000000000000000000000apoint \
+  --from $WALLET \
+  --commission-max-change-rate "0.01" \
+  --commission-max-rate "0.2" \
+  --commission-rate "0.07" \
+  --min-self-delegation "1000000000000000000000" \
+  --pubkey $(evmosd tendermint show-validator) \
+  --moniker $NODENAME \
+  --chain-id $EVMOS_CHAIN_ID
+
+Delete Node
+sudo systemctl stop evmosd
+sudo systemctl disable evmosd
+sudo rm /etc/systemd/system/evmos* -rf
+sudo rm $(which evmosd) -rf
+sudo rm $HOME/.evmosd -rf
+sudo rm $HOME/point-chain -rf
